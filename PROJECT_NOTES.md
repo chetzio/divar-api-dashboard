@@ -4,6 +4,8 @@ A personal business tool for the user's dad, who buys antique/old radios on Diva
 
 **Phase 1 (this build, 2026-09-21) is complete and verified live**: financial tracking with repair/expense costs, a Contacts address book, email+SMS notifications, and a full visual redesign, on top of the original ledger/discovery/Telegram build from 2026-09-19/20. Phase 2 (Telegram bot as an *additional* interface — paste-a-link, quick-log by chat, `/stats`) is deliberately deferred; `worker/src/bot.ts` still exists and works, it's just not started unless `TELEGRAM_BOT_TOKEN` is set. See "Phase 1 additions" below for what's new; everything under "Repo layout" / "Kenar" / "Divar discovery" below describes the original build and is still accurate.
 
+**Temporarily deployed and live (2026-09-22)** at `http://45.149.78.207:3100` on a shared VPS the user also uses for other business sites — see "Temporary VPS deploy" below for the full story, what's isolated vs. shared, two real bugs this deploy surfaced and fixed, and exact teardown steps for when the real dedicated VPS arrives.
+
 Full background/rationale for the architecture is in the conversation that built this (2026-09-19/20) — the short version: Divar's official **Kenar** developer platform (kenar.divar.dev, github.com/divar-ir/kenar-docs) is built for sellers managing their own listings, not buyers monitoring the marketplace. Its search API (`finder/post`) is capped at **100 calls for the app's entire lifetime**, so it can't power ongoing alerts. There's also no official webhook for new listings from other sellers. So the design splits into a reliable core (the ledger, zero API dependency) plus a best-effort discovery piece (polling Divar's own public feed, same approach community scraper projects use).
 
 ## Repo layout
@@ -34,19 +36,25 @@ All of the above was verified through the *real* running app (not just code revi
 
 One tooling quirk hit during this verification, worth knowing if it recurs: the preview tool's `preview_click` did not reliably trigger Next.js `<Link>` client-side navigation or form submission via `<button type="submit">` in this environment — clicks reported success but nothing happened. Worked around it every time with `preview_eval` (`window.location.href = '/path'` for nav, `form.requestSubmit()` for submits). Not a bug in the app itself — confirmed by checking `window.location.pathname` and the network tab, which showed zero navigation/request activity from the clicks.
 
-## The honest caveat: Divar discovery (`packages/core/src/divar-public.ts`)
+## Divar discovery (`packages/core/src/divar-public.ts`) — the real request shape, confirmed 2026-09-22
 
-This is the one unofficial, best-effort piece. `api.divar.ir/v8/postlist/w/search` is confirmed live and returns real current listings (title, token, city, image) with zero rate limit — but **it's unconfirmed whether the category/city filters in the request body actually do anything server-side**. Several guessed request shapes (based on a public Go client for a similar unofficial endpoint) were silently ignored in testing and returned the same generic nationwide feed regardless of what filter was sent. So the real filtering happens client-side via `matchesKeywords()` (`keywords.ts`) against whatever the feed returns — every `SavedSearch` currently polls the same nationwide firehose and is differentiated only by its keyword list, not by city.
+This was the one unofficial, best-effort piece, and for a long time an open question: was `api.divar.ir/v8/postlist/w/search`'s category/city filtering actually doing anything, or was every `SavedSearch` just polling the same generic nationwide firehose and relying entirely on client-side keyword matching? **Now confirmed and fixed**, once the app was running somewhere with real outbound internet (the local dev sandbox never had any).
 
-**Next concrete step to improve this**: capture one real request from divar.ir's own search page via browser DevTools (Network tab, search for something, find the XHR to `api.divar.ir`, copy as cURL) and compare against what's implemented. Chrome extension wasn't connected when this was built, so this step is still open.
+The original guessed shape (`json_schema.data.category...` at the top level) was simply wrong. The real shape, found via `github.com/shojaee76-cmyk/divar-mcp`'s `client.py` and verified empirically with real curl requests from the VPS before trusting it:
+- Free-text search: `search_data.query` — **genuinely respected server-side**. Tested `"رادیو قدیمی"` and got 25 results, 23 of them clearly relevant old radios/gramophones (titles, real prices, real cities spread across Tehran/Mashhad/Shiraz/Isfahan/etc.).
+- City restriction: top-level `city_ids`, an array of **numeric** id strings, not slugs — `CITY_ID_BY_SLUG` in `divar-public.ts` maps the 39 slugs `SavedSearch.cities` actually stores (e.g. `"tehran"` → `"1"`) to what the API wants. Omitting `city_ids` entirely searches nationwide (confirmed: a no-city-ids test returned listings spread across multiple different cities).
+- Category (optional, still available but not required for good results): `search_data.form_data.data.category.str.value`, e.g. `"historical-objects"`.
+- Price is available too, just not as a clean number — it's a formatted Persian string on `data.middle_description_text` (e.g. `"۱۲,۰۰۰,۰۰۰ تومان"`); `parsePersianPrice()` in `divar-public.ts` converts it.
 
-Verified working end-to-end during the build: a real `SavedSearch` row was polled live by the worker, the fetch succeeded with zero errors, `lastPolledAt` updated correctly. Zero candidates matched in that one sample, which is expected (radios are a small fraction of Divar's overall listing volume) — not a sign of failure.
+`worker/src/divar-discovery.ts` now builds the query from `SavedSearch.queryText`, falling back to the search's own `label` if that's empty — worth knowing because that fallback is what makes a search literally titled "رادیو قدیمی" with no separate keywords work without any UI change; it's what a real user naturally typed into the form. `matchesKeywords()` (`keywords.ts`) still runs afterward as a cheap secondary filter, but the server-side query is doing the real work now.
+
+**Verified end-to-end through the actual worker process** on the VPS deploy (not just a standalone script): reset a real `SavedSearch`'s `lastPolledAt`, restarted the worker, watched it fetch, filter, and write 22 real `Candidate` rows to the database, each one correctly triggering (and gracefully no-op'ing, since SMTP/SMS aren't configured yet) a notification attempt. This is as close to a full real-world proof as this project has had.
 
 ## What's verified vs. not
 
 - **Fully verified live**: web app (all 9 routes render at phone width — dashboard, items list/new/detail, contacts list/detail, finds, searches, settings, collection), full Contact↔Item↔Expense CRUD tested end-to-end through the real UI with correct profit math, monthly chart, and CSV export all agreeing on the same number, Prisma/SQLite, the Divar discovery poller's live fetch path, graceful worker degradation when Telegram is unreachable/unconfigured, the notification settings save/test-send round trip (with expected graceful failures since no real SMTP/SMS creds exist in this sandbox).
 - **Structurally verified, not live-tested**: the Kenar API client (`getPost`/`searchPosts`) — code correctly implements the documented request/response shapes, but no real Kenar API key was available to test against; actually *sending* a real email or SMS (no real SMTP account or SMS provider key configured yet — the settings UI correctly reports this rather than silently failing); the Telegram bot — worker starts cleanly and registers all handlers, but this sandbox's network blocked outbound access to `api.telegram.org` (ECONNREFUSED, confirmed not a code issue), so live bot behavior needs testing on a real machine with a real token from @BotFather, when Phase 2 starts.
-- **Not yet done**: real app icons (currently one SVG reused at all sizes — fine for most Android/Chrome install prompts, but real 192/512 PNGs would be more broadly compatible); deployment (VPS/domain didn't exist yet as of this build — see Build order in the original plan for the Docker Compose + Caddy + webhook-mode-switch steps); a second display font for headings (see the Lalezar caveat above); Phase 2 (Telegram bot re-enabled as an added interface).
+- **Not yet done**: real app icons (currently one SVG reused at all sizes — fine for most Android/Chrome install prompts, but real 192/512 PNGs would be more broadly compatible); a second display font for headings (see the Lalezar caveat above); Phase 2 (Telegram bot re-enabled as an added interface); a *permanent* deployment with a domain, HTTPS, and access control (see "Temporary VPS deploy" below for the current stopgap).
 
 ## Setup checklist for the user
 
@@ -56,3 +64,28 @@ Verified working end-to-end during the build: a real `SavedSearch` row was polle
 4. (Phase 2, not needed yet) Message @BotFather on Telegram, create a bot, get the token → put it in `worker/.env` as `TELEGRAM_BOT_TOKEN` to re-enable the Telegram interface alongside email/SMS.
 5. `npm install` at repo root, then `npm run prisma:migrate` if the schema ever changes.
 6. `npm run dev:web` and `npm run dev:worker` (separate terminals) for local dev.
+
+## Temporary VPS deploy (2026-09-22)
+
+Live at **http://45.149.78.207:3100**, deliberately temporary — the user's real dedicated VPS is a few days out, this was specifically to test whether Divar's public feed and (eventually) the Kenar API are actually reachable from real infrastructure, since the local dev sandbox has zero outbound internet access. **Result: confirmed working** — the worker's poll of `api.divar.ir` completed with no errors from this box (`lastPolledAt` updated cleanly), unlike every attempt from the local sandbox.
+
+**Where and how**: `root@45.149.78.207` is a cPanel/WHM box (AlmaLinux 8.10) the user already runs other production services on (a `b2b` cPanel account with `parsroll-blog`/odm.ir, a cafe-menu site, etc., plus separate `odm` cPanel accounts) — not a dedicated machine. Everything for this deploy lives in **one directory, `/opt/radiokar`**, deliberately outside any cPanel account, git-cloned from the new public repo `github.com/chetzio/divar-api-dashboard` (CLAUDE.md/AGENTS.md/.claude/ are gitignored — kept out of the public repo on request). Nothing under `/home/b2b`, `/home/odm`, Apache, or cPanel config was touched. No firewall changes were needed (`iptables -L INPUT` was already policy ACCEPT with zero rules).
+
+- **`radiokar-worker`** — a plain systemd service (`/etc/systemd/system/radiokar-worker.service`), `User=root`, runs `npx tsx src/index.ts` directly from `/opt/radiokar/worker` — no build step, matches the sibling services' convention (`parsroll-blog.service` etc. all run as plain root-owned Node processes under systemd on this box already).
+- **`radiokar-web`** — a **Docker container**, not systemd. The host's glibc (2.28, an AlmaLinux 8 ceiling that can't be upgraded without touching the whole OS) can't run Next.js/Tailwind v4's native binaries at all, native or musl. Docker CE was installed (official repo, `dnf install docker-ce`) specifically so the web app builds and runs against a modern glibc (`node:20-bookworm`) independent of the host. Built from `/opt/radiokar/Dockerfile.web` (not committed to git — server-only), run as `docker run -d --name radiokar-web --restart unless-stopped -p 3100:3100 -v /opt/radiokar/prisma:/app/prisma -e DATABASE_URL="file:/app/prisma/dev.db" radiokar-web` — the bind mount is what makes the container and the native worker process share one live SQLite file.
+
+**Two real bugs this deploy surfaced and fixed in the source** (not just server-side workarounds):
+1. **`package-lock.json` was Windows-generated and never resolved a Linux build of `lightningcss`** (Tailwind v4's CSS engine) — this is what actually caused "Cannot find module '../lightningcss.linux-x64-gnu.node'" on *every* build attempt, including inside a fresh modern-glibc Docker container, which is what revealed it wasn't really a glibc problem at all. `Dockerfile.web` doesn't copy the lockfile, forcing a fresh Linux-native resolve on every image build. The committed lockfile itself hasn't been regenerated on Linux yet — worth doing before the real VPS deploy to get reproducible builds back.
+2. **Every page was getting prerendered once at build time and frozen** (`○ Static` in the build output) instead of reading live data per request — Prisma calls don't trigger Next.js's automatic dynamic-rendering detection the way `fetch()` does. Fixed with `export const dynamic = "force-dynamic"` in `web/app/layout.tsx` (cascades to every route). Confirmed fixed: rebuilding after the fix showed `ƒ Dynamic` on all 12 routes, and the container correctly shows a `SavedSearch` created via the worker's own DB connection, proving both processes read the same live state.
+
+**Exposure**: no auth, no HTTPS — confirmed acceptable with the user for this short window (no real sensitive data entered yet). Don't treat this as the permanent posture.
+
+**Teardown, once the real dedicated VPS is ready**:
+```
+docker stop radiokar-web && docker rm radiokar-web && docker rmi radiokar-web
+systemctl disable --now radiokar-worker
+rm /etc/systemd/system/radiokar-worker.service
+rm -rf /opt/radiokar
+systemctl daemon-reload
+```
+(Leaves Docker itself installed — harmless if unused, or `dnf remove docker-ce docker-ce-cli containerd.io` to fully remove it too.)
