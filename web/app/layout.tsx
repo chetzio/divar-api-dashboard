@@ -29,6 +29,14 @@ export const viewport: Viewport = {
   themeColor: "#00788c",
 };
 
+// Every page here reads live state straight from Prisma (not Next's fetch()),
+// which Next's static analysis doesn't treat as a dynamic-rendering signal on
+// its own - left alone, pages with no other dynamic API get prerendered once
+// at build time and frozen (confirmed during the VPS deploy build: dashboard/
+// collection/contacts/finds/searches all came out "○ Static"). Forcing the
+// whole app dynamic here means every request re-reads the real database.
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fa" dir="rtl" className={vazirmatn.variable}>
