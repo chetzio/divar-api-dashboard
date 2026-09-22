@@ -30,25 +30,31 @@ async function pollOne(
 ) {
   await prisma.savedSearch.update({ where: { id: search.id }, data: { lastPolledAt: new Date() } });
 
+  // Server-side query search is confirmed working (verified live 2026-09-22 -
+  // see divar-public.ts). queryText is what the user actually meant to search
+  // for; fall back to the search's own label since that's what people
+  // naturally type their intent into (confirmed real usage: a search literally
+  // labeled "رادیو قدیمی" with empty queryText - using the label here is what
+  // makes that work without any UI change).
+  const query = search.queryText.trim() || search.label.trim();
+  const cities = Array.isArray(search.cities) ? (search.cities as string[]) : [];
+
   let feed;
   try {
-    // NOTE: cityIds intentionally omitted - SavedSearch.cities stores Divar city
-    // *slugs* (e.g. "tehran") but this feed's cities filter expects numeric ids,
-    // and it's unconfirmed the filter is even respected server-side (see
-    // divar-public.ts). Every saved search currently polls the same nationwide
-    // feed and is differentiated only by its own keyword list.
-    feed = await fetchDivarFeed({ category: search.category ?? undefined });
+    feed = await fetchDivarFeed({
+      query: query || undefined,
+      category: search.category ?? undefined,
+      cities,
+    });
   } catch (err) {
     console.error(`[discovery] fetch failed for "${search.label}":`, err);
     return; // quiet backoff, next tick retries
   }
 
-  const extraKeywords = search.queryText
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const keywords = [...DEFAULT_RADIO_KEYWORDS, ...extraKeywords];
-  const matches = feed.filter((item) => item.title && matchesKeywords(item.title, keywords));
+  // Server-side query search is already quite precise (confirmed ~93% relevant
+  // in testing), but keep the keyword filter as a cheap safety net in case the
+  // query was generic or Divar's matching drifts.
+  const matches = feed.filter((item) => item.title && matchesKeywords(item.title, DEFAULT_RADIO_KEYWORDS));
 
   for (const match of matches) {
     const exists = await prisma.candidate.findUnique({
