@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-vazirmatn), sans-serif;
+
+  /* canvas vs surface: page background sits a shade below card backgrounds,
+     so cards read as distinct layers without needing shadows everywhere */
+  --color-canvas: #f7f7f8;
+  --color-surface: #ffffff;
+
+  /* text hierarchy */
+  --color-ink: #17171b;
+  --color-subtle: #7b7b7b;
+  --color-muted: #a1a1a4;
+
+  /* brand */
+  --color-primary: #00788c;
+  --color-secondary: #342a66;
+
+  /* status */
+  --color-danger: #c1443f;
+  --color-success: #2f8f6f;
+}
+
+html {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+body {
+  min-height: 100dvh;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-primary) 25%, transparent);
+}
+
+.input {
+  @apply w-full rounded-md border border-muted/50 bg-surface px-3 py-2 text-ink outline-none transition-colors;
+}
+
+.input:focus {
+  @apply border-primary;
+}
+
+.card {
+  @apply rounded-lg border border-muted/30 bg-surface p-3;
+}
+
+.btn-primary {
+  @apply block w-full rounded-md bg-primary py-3 text-center font-bold text-canvas shadow-sm transition-transform active:scale-[0.98];
+}
+
+.btn-secondary {
+  @apply block w-full rounded-md border border-muted/50 py-3 text-center font-bold text-ink transition-transform active:scale-[0.98];
+}
+
+.btn-danger-outline {
+  @apply block w-full rounded-md border border-danger py-3 text-center font-bold text-danger transition-transform active:scale-[0.98];
+}
+
+.chip {
+  @apply rounded-full px-3 py-1 text-subtle transition-colors;
+}
+
+.chip-active {
+  @apply rounded-full bg-primary px-3 py-1 text-canvas transition-colors;
+}
+
+.heading {
+  @apply font-black text-3xl leading-tight tracking-tight text-secondary;
+}
+
+.section-heading {
+  @apply font-bold text-secondary;
+}

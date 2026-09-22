@@ -1,0 +1,15 @@
+{
+  "name": "رادیوکار",
+  "short_name": "رادیوکار",
+  "description": "دفترچه خرید و فروش رادیوهای قدیمی",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f7f8",
+  "theme_color": "#00788c",
+  "dir": "rtl",
+  "lang": "fa",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

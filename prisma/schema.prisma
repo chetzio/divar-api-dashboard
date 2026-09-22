@@ -1,0 +1,134 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../packages/core/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum ItemStatus {
+  HUNTING
+  NEGOTIATING
+  PURCHASED
+  KEEPING
+  LISTED
+  SOLD
+}
+
+enum SaleChannel {
+  DIVAR
+  INSTAGRAM
+  OTHER
+}
+
+enum CandidateStatus {
+  NEW
+  PROMOTED
+  DISMISSED
+}
+
+enum ExpenseCategory {
+  REPAIR
+  PARTS
+  SHIPPING
+  OTHER
+}
+
+enum ContactRole {
+  SELLER
+  REPAIR
+  BUYER
+  OTHER
+}
+
+model Item {
+  id              String       @id @default(cuid())
+  status          ItemStatus   @default(HUNTING)
+  title           String
+  brandModel      String?
+  city            String?
+  postToken       String?
+  sourceUrl       String?
+  photos          Json         @default("[]")
+  purchasePrice   Int?
+  purchaseDate    DateTime?
+  sellerName      String?
+  sellerPhone     String?
+  sellerNotes     String?
+  sellerContact   Contact?     @relation(fields: [sellerContactId], references: [id])
+  sellerContactId String?
+  listedPrice     Int?
+  saleChannel     SaleChannel?
+  salePrice       Int?
+  saleDate        DateTime?
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  expenses        Expense[]
+}
+
+model Expense {
+  id          String          @id @default(cuid())
+  item        Item            @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  itemId      String
+  category    ExpenseCategory @default(REPAIR)
+  description String?
+  amount      Int
+  date        DateTime        @default(now())
+  contact     Contact?        @relation(fields: [contactId], references: [id])
+  contactId   String?
+  createdAt   DateTime        @default(now())
+}
+
+model Contact {
+  id        String      @id @default(cuid())
+  name      String
+  phone     String?
+  role      ContactRole @default(OTHER)
+  notes     String?
+  createdAt DateTime    @default(now())
+  items     Item[]
+  expenses  Expense[]
+}
+
+model SavedSearch {
+  id              String      @id @default(cuid())
+  label           String
+  queryText       String
+  cities          Json        @default("[]")
+  category        String?
+  intervalMinutes Int         @default(20)
+  active          Boolean     @default(true)
+  lastPolledAt    DateTime?
+  createdAt       DateTime    @default(now())
+  candidates      Candidate[]
+}
+
+model Candidate {
+  id            String          @id @default(cuid())
+  savedSearch   SavedSearch     @relation(fields: [savedSearchId], references: [id], onDelete: Cascade)
+  savedSearchId String
+  postToken     String
+  title         String
+  price         Int?
+  city          String?
+  photoUrl      String?
+  foundAt       DateTime        @default(now())
+  status        CandidateStatus @default(NEW)
+
+  @@unique([savedSearchId, postToken])
+}
+
+model Setting {
+  id              Int      @id @default(1)
+  telegramChatId  String?
+  kenarApiKey     String?
+  finderCallsUsed Int      @default(0)
+  notifyEmail     String?
+  notifyPhone     String?
+  smsProvider     String?
+  smsApiKey       String?
+  updatedAt       DateTime @updatedAt
+}
